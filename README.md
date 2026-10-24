@@ -1,7 +1,7 @@
 <div align="center">
 
   <h1>⚒️ Hephaestus</h1>
-  <p>A purely functional modelling layer for MILP and SMT solvers, for C# 14 / .NET 10.</p>
+  <p>A purely functional modelling layer for MILP and SMT solvers in C#.</p>
 
   <span>
     <a href="https://github.com/SgtSwagrid/hephaestus/actions/workflows/build-integrity.yml"><img src="https://github.com/SgtSwagrid/hephaestus/actions/workflows/build-integrity.yml/badge.svg" alt="Build status" /></a>
