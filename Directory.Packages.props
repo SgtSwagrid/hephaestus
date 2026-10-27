@@ -10,7 +10,7 @@
     <PackageVersion Include="Highs.Native" Version="1.15.1" />
     <!-- 4.11.2 is the last release of Microsoft.Z3 on nuget.org with a Linux binary; 4.12.x ships only Windows and macOS. -->
     <PackageVersion Include="Microsoft.Z3" Version="4.11.2" />
-    <PackageVersion Include="NodaTime" Version="3.3.5" />
+    <PackageVersion Include="NodaTime" Version="3.3.6" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">
