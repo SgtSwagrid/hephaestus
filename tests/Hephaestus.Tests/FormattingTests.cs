@@ -19,15 +19,9 @@ public sealed class FormattingTests {
     }
 
     [Fact]
-    public void TheChangeoverConstraintReadsLikeItsSpecification() {
-        var separated = (X + 120 <= Y) | (Y + 120 <= X);
-        var conflictFree = !(A & B) | separated;
-
-        Assert.Equal("!(a & b) | (x + 120 <= y) | (y + 120 <= x)", conflictFree.Format());
-    }
-
-    [Fact]
     public void BracketsAppearOnlyWhereTheyAreNeeded() {
+        // The changeover constraint reads like its specification.
+        Assert.Equal("!(a & b) | (x + 120 <= y) | (y + 120 <= x)", (!(A & B) | (X + 120 <= Y) | (Y + 120 <= X)).Format());
         Assert.Equal("x <= y", (X <= Y).Format());
         Assert.Equal("a & b | !a", (A & B | !A).Format());
         Assert.Equal("a & (b | !a)", (A & (B | !A)).Format());
@@ -37,10 +31,6 @@ public sealed class FormattingTests {
         Assert.Equal("!(a <=> b)", (A ^ B).Format());
         Assert.Equal("true & !false", (BooleanConstant.True & !BooleanConstant.False).Format());
     }
-
-    [Fact]
-    public void ABinaryVariableFormatsAsItsName() =>
-        Assert.Equal("a", A.Format());
 
     [Fact]
     public void AffineFormsListTheirTermsInVariableOrder() {

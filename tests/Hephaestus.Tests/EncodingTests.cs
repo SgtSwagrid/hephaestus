@@ -24,6 +24,7 @@ public sealed class EncodingTests {
         var encoded = Problem.Satisfy(ChangeoverConstraint).Encode();
 
         Assert.Equal(["_aux0"], encoded.Columns.Where(column => column.IsAuxiliary).Select(column => column.Variable.Name));
+        // A hand-written encoding would have to be given its big-M, the changeover plus the horizon; here it falls out of the bounds.
         Assert.Equal(
             [
                 // _aux0 = 1 forces A before B ...
@@ -32,16 +33,6 @@ public sealed class EncodingTests {
                 "-3720*_aux0 - startA + startB + 3720*usesA + 3720*usesB <= 7320",
             ],
             encoded.Rows.Select(row => row.Format()));
-    }
-
-    [Fact]
-    public void BigMIsTheHandComputedValueFromTheOriginalStory() {
-        // A hand-written encoding would have to be given this value; here it falls out of the bounds.
-        var encoded = Problem.Satisfy(ChangeoverConstraint).Encode();
-
-        Assert.All(
-            encoded.Rows.Where(row => row.Coefficients.Keys.Any(variable => variable.Name.StartsWith("_aux")) && row.Coefficients.ContainsKey(StartA)),
-            row => Assert.Contains(row.Coefficients.Values, coefficient => Math.Abs(coefficient) == Changeover + Horizon));
     }
 
     [Fact]
@@ -54,17 +45,9 @@ public sealed class EncodingTests {
     }
 
     [Fact]
-    public void BoundsOnWholeNumbersRoundInwards() {
-        var encoded = Problem.Satisfy((2 * N <= 9) & (N > 0.5) & (N < 4)).Encode();
-
-        Assert.Equal(new Column(N, 1, 3, IsAuxiliary: false), encoded.Columns.Single());
-    }
-
-    [Fact]
-    public void RoundingInwardsForgivesDustButNotGenuineFractionsHoweverLargeTheNumber() {
-        var encoded = Problem.Satisfy((N <= 999_999.9995) & (N >= 0.1 + 0.2 - 0.3 + 5)).Encode();
-
-        Assert.Equal(new Column(N, 5, 999_999, IsAuxiliary: false), encoded.Columns.Single());
+    public void BoundsOnWholeNumbersRoundInwardsForgivingDustButNotGenuineFractionsHoweverLargeTheNumber() {
+        Assert.Equal(new Column(N, 1, 3, IsAuxiliary: false), Problem.Satisfy((2 * N <= 9) & (N > 0.5) & (N < 4)).Encode().Columns.Single());
+        Assert.Equal(new Column(N, 5, 999_999, IsAuxiliary: false), Problem.Satisfy((N <= 999_999.9995) & (N >= 0.1 + 0.2 - 0.3 + 5)).Encode().Columns.Single());
     }
 
     [Fact]
@@ -94,27 +77,18 @@ public sealed class EncodingTests {
     }
 
     [Fact]
-    public void RowsGuardedAlikeShareOneBinaryForTheirConjunction() {
-        var problem = GuardedBy([[new Literal(UsesA, true), new Literal(UsesB, true)], [new Literal(UsesB, true), new Literal(UsesA, true)]]);
-
-        var single = problem.WithSingleGuards();
-
-        Assert.Single(single.Columns, column => column.IsAuxiliary);
-    }
-
-    [Fact]
-    public void ButGuardsAreToldApartByTheirLiteralsAndNotByTheirNames() {
+    public void RowsGuardedAlikeShareOneBinaryForTheirConjunctionButGuardsAreToldApartByTheirLiterals() {
+        var alike = GuardedBy([[new Literal(UsesA, true), new Literal(UsesB, true)], [new Literal(UsesB, true), new Literal(UsesA, true)]]);
         // Rendered as names and joined, "a" and "b & c" would read as the same three guards as "a", "b" and "c".
         var both = Variable.Binary("usesB & usesC");
         var third = Variable.Binary("usesC");
-        var problem = GuardedBy([
+        var apart = GuardedBy([
             [new Literal(UsesA, true), new Literal(both, true)],
             [new Literal(UsesA, true), new Literal(UsesB, true), new Literal(third, true)],
         ]);
 
-        var single = problem.WithSingleGuards();
-
-        Assert.Equal(2, single.Columns.Count(column => column.IsAuxiliary));
+        Assert.Single(alike.WithSingleGuards().Columns, column => column.IsAuxiliary);
+        Assert.Equal(2, apart.WithSingleGuards().Columns.Count(column => column.IsAuxiliary));
     }
 
     /// <summary>A problem whose rows say nothing but are guarded as given, for the single-guard rewrite to chew on.</summary>
@@ -126,44 +100,22 @@ public sealed class EncodingTests {
             AffineForm.Zero);
 
     [Fact]
-    public void EachGuardGetsABigMDerivedWithThatGuardOff() {
+    public void EachGuardGetsABigMOfItsOwnDerivedWithThatGuardOff() {
         // A row that counts the very binary guarding it: with usesA off the row reaches 95, not the 105 it reaches unconditionally.
-        var constraint = X.Between(0, 100) & UsesA.Implies(X + 10 * UsesA.Indicator <= 5);
+        var counting = X.Between(0, 100) & UsesA.Implies(X + 10 * UsesA.Indicator <= 5);
+        // With usesA off this row reaches 2 and with usesB off it reaches 5, so the two slacks are weighted apart.
+        var twoGuards = N.Between(0, 6) & (!UsesA | !UsesB | (N + 3 * UsesA.Indicator <= 4));
+        // Without usesA this row is 0 <= x, which the bounds already say, so no big-M is needed and the row stays unconditional.
+        var needless = X.Between(0, 10) & UsesA.Implies(5 * UsesA.Indicator <= X);
+        var encoded = Problem.Satisfy(twoGuards).Encode();
 
-        var encoded = Problem.Satisfy(constraint).Encode();
-
-        Assert.Equal(["105*usesA + x <= 100"], encoded.Rows.Select(row => row.Format()));
-    }
-
-    [Fact]
-    public void TheGuardsOfOneRowGetBigMValuesOfTheirOwn() {
-        var constraint = N.Between(0, 6) & (!UsesA | !UsesB | (N + 3 * UsesA.Indicator <= 4));
-
-        var encoded = Problem.Satisfy(constraint).Encode();
-
-        // With usesA off the row reaches 2 and with usesB off it reaches 5, so the two slacks are weighted apart.
+        Assert.Equal(["105*usesA + x <= 100"], Problem.Satisfy(counting).Encode().Rows.Select(row => row.Format()));
         Assert.Equal(["n + 5*usesA + 5*usesB <= 11"], encoded.Rows.Select(row => row.Format()));
-    }
-
-    [Fact]
-    public void AGuardThatTheRowHoldsWithoutIsNotRelaxedAgainstAtAll() {
-        // Without usesA the row is 0 <= x, which the bounds already say, so no big-M is needed and the row stays unconditional.
-        var constraint = X.Between(0, 10) & UsesA.Implies(5 * UsesA.Indicator <= X);
-
-        var encoded = Problem.Satisfy(constraint).Encode();
-
-        Assert.Equal(["5*usesA - x <= 0"], encoded.Rows.Select(row => row.Format()));
-    }
-
-    [Fact]
-    public void TheRelaxedRowsAdmitExactlyTheAssignmentsTheConstraintDoes() {
-        var constraint = N.Between(0, 6) & (!UsesA | !UsesB | (N + 3 * UsesA.Indicator <= 4));
-
-        var encoded = Problem.Satisfy(constraint).Encode();
-
+        Assert.Equal(["5*usesA - x <= 0"], Problem.Satisfy(needless).Encode().Rows.Select(row => row.Format()));
+        // The relaxed rows admit exactly the assignments the constraint does.
         Assert.All(
             Assignments(encoded.Columns),
-            assignment => Assert.Equal(assignment.Value(constraint), Admits(encoded, assignment)));
+            assignment => Assert.Equal(assignment.Value(twoGuards), Admits(encoded, assignment)));
     }
 
     /// <summary>Every whole-number assignment within the column bounds, which is all of them when every column is bounded and whole.</summary>
@@ -181,48 +133,29 @@ public sealed class EncodingTests {
     private static bool Within(LinearRow row, double activity) => row.LowerBound <= activity && activity <= row.UpperBound;
 
     [Fact]
-    public void AnUnderivableBigMIsALoudErrorNamingTheCulprits() {
-        var constraint = X.Between(0, 10) & ((X + Y <= 5) | (X >= 8));
+    public void AnUnderivableBigMIsALoudErrorNamingTheCulpritsUnlessAFallbackIsGiven() {
+        var problem = Problem.Satisfy(X.Between(0, 10) & ((X + Y <= 5) | (X >= 8)));
 
-        var exception = Assert.Throws<ModellingException>(() => Problem.Satisfy(constraint).Encode());
+        var exception = Assert.Throws<ModellingException>(() => problem.Encode());
 
         Assert.Contains("'y'", exception.Message);
         Assert.DoesNotContain("'x'", exception.Message);
-    }
-
-    [Fact]
-    public void AFallbackBigMIsUsedOnlyWhereNoneCanBeDerived() {
-        var constraint = X.Between(0, 10) & ((X + Y <= 5) | (X >= 8));
-
-        var encoded = Problem.Satisfy(constraint).Encode(new EncodingOptions(FallbackBigM: 1e6));
-
-        Assert.Equal(["1000000*_aux0 + x + y <= 1000005", "-8*_aux0 - x <= -8"], encoded.Rows.Select(row => row.Format()));
+        // The fallback is used only where no big-M can be derived.
+        Assert.Equal(["1000000*_aux0 + x + y <= 1000005", "-8*_aux0 - x <= -8"], problem.Encode(new EncodingOptions(FallbackBigM: 1e6)).Rows.Select(row => row.Format()));
     }
 
     [Fact]
     public void ABigMBeyondTheStatedLimitIsALoudErrorNamingTheWidestVariables() {
-        var constraint = X.Between(0, 1e9) & (UsesA | (X <= 5));
+        var problem = Problem.Satisfy(X.Between(0, 1e9) & (UsesA | (X <= 5)));
 
-        var exception = Assert.Throws<ModellingException>(() => Problem.Satisfy(constraint).Encode(new EncodingOptions(MaximumBigM: 1e6)));
+        var exception = Assert.Throws<ModellingException>(() => problem.Encode(new EncodingOptions(MaximumBigM: 1e6)));
 
         Assert.Contains("'x'", exception.Message);
         Assert.Contains(nameof(EncodingOptions.MaximumBigM), exception.Message);
+        // Within the limit, or with no limit, which is the default, it passes without comment.
+        Assert.Equal(["-999999995*usesA + x <= 5"], problem.Encode(new EncodingOptions(MaximumBigM: 1e10)).Rows.Select(row => row.Format()));
+        Assert.Equal(["-999999995*usesA + x <= 5"], problem.Encode().Rows.Select(row => row.Format()));
     }
-
-    [Fact]
-    public void ABigMWithinTheStatedLimitPassesWithoutComment() {
-        var constraint = X.Between(0, 1e9) & (UsesA | (X <= 5));
-
-        var encoded = Problem.Satisfy(constraint).Encode(new EncodingOptions(MaximumBigM: 1e10));
-
-        Assert.Equal(["-999999995*usesA + x <= 5"], encoded.Rows.Select(row => row.Format()));
-    }
-
-    [Fact]
-    public void NoLimitIsTheDefault() =>
-        Assert.Equal(
-            ["-999999995*usesA + x <= 5"],
-            Problem.Satisfy(X.Between(0, 1e9) & (UsesA | (X <= 5))).Encode().Rows.Select(row => row.Format()));
 
     [Fact]
     public void EqualSubformulasShareOneAuxiliary() {
@@ -234,21 +167,9 @@ public sealed class EncodingTests {
     }
 
     [Fact]
-    public void ConditionalRowsThatCanNeverBindAreDropped() {
-        var constraint = X.Between(0, 10) & (UsesA | (X <= 20));
-
-        var encoded = Problem.Satisfy(constraint).Encode();
-
-        Assert.Empty(encoded.Rows);
-    }
-
-    [Fact]
-    public void ConditionalRowsThatCanNeverHoldForbidTheirGuards() {
-        var constraint = X.Between(0, 10) & (UsesA | (X >= 20));
-
-        var encoded = Problem.Satisfy(constraint).Encode();
-
-        Assert.Equal(["-usesA <= -1"], encoded.Rows.Select(row => row.Format()));
+    public void ConditionalRowsThatCanNeverBindAreDroppedAndThoseThatCanNeverHoldForbidTheirGuards() {
+        Assert.Empty(Problem.Satisfy(X.Between(0, 10) & (UsesA | (X <= 20))).Encode().Rows);
+        Assert.Equal(["-usesA <= -1"], Problem.Satisfy(X.Between(0, 10) & (UsesA | (X >= 20))).Encode().Rows.Select(row => row.Format()));
     }
 
     [Fact]
@@ -266,15 +187,11 @@ public sealed class EncodingTests {
         Assert.Throws<ModellingException>(() => Problem.Satisfy((Variable.Integer("x") <= 3) & (X >= 1)).Encode());
 
     [Fact]
-    public void EvidentInfeasibilityIsRecognisedWithoutASolver() {
+    public void EvidentInfeasibilityIsRecognisedWithoutASolverBeforeAndAfterTheGuardsAreRelaxed() {
         Assert.True(Problem.Satisfy((X <= 1) & (X >= 2)).Encode().IsTriviallyInfeasible);
         Assert.True(Problem.Satisfy(BooleanConstant.False).Encode().IsTriviallyInfeasible);
         Assert.True(Problem.Satisfy((X <= 1) & !(X <= 1 | UsesA | !UsesA)).Encode().IsTriviallyInfeasible);
         Assert.False(Problem.Satisfy((X <= 2) & (X >= 1)).Encode().IsTriviallyInfeasible);
-    }
-
-    [Fact]
-    public void AndIsRecognisedBeforeTheGuardsAreRelaxedToo() {
         Assert.True(Problem.Satisfy((X <= 1) & (X >= 2)).EncodeLogic().IsTriviallyInfeasible);
         Assert.True(Problem.Satisfy(BooleanConstant.False).EncodeLogic().IsTriviallyInfeasible);
         Assert.False(Problem.Satisfy((X <= 2) & (X >= 1)).EncodeLogic().IsTriviallyInfeasible);
@@ -297,18 +214,13 @@ public sealed class EncodingTests {
     }
 
     [Fact]
-    public void TheObjectiveIsCarriedAcrossInNormalForm() {
+    public void TheObjectiveIsCarriedAcrossInNormalFormAndItsVariablesGetColumns() {
         var encoded = Problem.Maximise(2 * (X + Y) - X + 7).SubjectTo(X.Between(0, 1) & Y.Between(0, 1)).Encode();
 
         Assert.Equal(ObjectiveSense.Maximise, encoded.Sense);
         Assert.Equal("x + 2*y + 7", encoded.Objective.Format());
-    }
-
-    [Fact]
-    public void VariablesThatOnlyAppearInTheObjectiveStillGetColumns() {
-        var encoded = Problem.Minimise(X + Y).SubjectTo(X >= 0).Encode();
-
-        Assert.Equal([X, Y], encoded.Columns.Select(column => column.Variable));
+        // Even those that appear nowhere else.
+        Assert.Equal([X, Y], Problem.Minimise(X + Y).SubjectTo(X >= 0).Encode().Columns.Select(column => column.Variable));
     }
 
     [Fact]

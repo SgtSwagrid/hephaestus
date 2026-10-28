@@ -57,15 +57,11 @@ public sealed class LinearProgrammingSolverTests {
     private static readonly ContinuousVariable Gap = Variable.Continuous("gap");
     private static readonly IBooleanExpression<ILinearArithmetic> Domain = X.Between(0, 10) & Gap.Between(0, 10) & (Gap >= X - 5) & (Gap >= 5 - X);
 
-    [Theory]
-    [InlineData(OrToolsSolverId.Glop)]
-    [InlineData("CLP")]
-    [InlineData("PDLP")]
-    public void ADisjunctionIsRefusedRatherThanSilentlyRelaxed(string solverId) {
-        var exception = Assert.Throws<NotSupportedException>(() => OrToolsSolver.Create(solverId).Solve(Problem.Minimise(Gap).SubjectTo(Domain & ((X <= 3) | (X >= 7)))));
-
-        Assert.Contains("_aux0", exception.Message);
-    }
+    [Fact]
+    public void ADisjunctionIsRefusedRatherThanSilentlyRelaxed() =>
+        Assert.All(
+            new[] { OrToolsSolverId.Glop, "CLP", "PDLP" },
+            solverId => Assert.Contains("_aux0", Assert.Throws<NotSupportedException>(() => OrToolsSolver.Create(solverId).Solve(Problem.Minimise(Gap).SubjectTo(Domain & ((X <= 3) | (X >= 7))))).Message));
 
     [Fact]
     public void APurelyContinuousConjunctiveProblemIsStillWelcome() =>

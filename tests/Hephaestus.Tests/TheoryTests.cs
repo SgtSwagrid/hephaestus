@@ -10,19 +10,14 @@ public sealed class TheoryTests {
     private static readonly BinaryVariable B = Variable.Binary("b");
 
     [Fact]
-    public void PureLogicIsAFormulaOfEveryTheory() {
+    public void PureLogicIsAFormulaOfEveryTheoryAndTheSameFormulaInWhicheverItIsSeen() {
         IBooleanExpression<ILogic> logic = !(A & B) | A.Implies(B);
         IBooleanExpression<ILinearArithmetic> mixed = logic & (X <= Y);
-
-        Assert.Equal("(!(a & b) | (a => b)) & (x <= y)", mixed.Format());
-        Assert.IsNotAssignableFrom<IBooleanExpression<ILogic>>(X <= Y);
-    }
-
-    [Fact]
-    public void AFormulaIsTheSameFormulaInWhicheverTheoryItIsSeen() {
         IBooleanExpression<ILinearArithmetic> wide = new Conjunction<ILinearArithmetic>(A, B);
         IBooleanExpression<ILogic> narrow = A & B;
 
+        Assert.Equal("(!(a & b) | (a => b)) & (x <= y)", mixed.Format());
+        Assert.IsNotAssignableFrom<IBooleanExpression<ILogic>>(X <= Y);
         Assert.Equal(wide, narrow);
         Assert.Equal(narrow, wide);
         Assert.Equal(wide.GetHashCode(), narrow.GetHashCode());
@@ -38,13 +33,8 @@ public sealed class TheoryTests {
         Assert.Equal("!a | (x - y <= 3)", linearised.Constraints[0].Lowered.Format());
         Assert.Equal("_max0 <= 5", linearised.Constraints[1].Lowered.Format());
         Assert.NotEmpty(linearised.Definitions);
-    }
-
-    [Fact]
-    public void ANormalFormKeepsStrictnessAndDisequationExact() {
-        var linearised = Problem.Satisfy((X < Y) & X.NotEqualTo(3)).Linearise();
-
-        Assert.Equal(["x - y < 0", "x != 3"], linearised.Constraints.Select(constraint => constraint.Lowered.Format()));
+        // A normal form keeps strictness and disequation exact.
+        Assert.Equal(["x - y < 0", "x != 3"], Problem.Satisfy((X < Y) & X.NotEqualTo(3)).Linearise().Constraints.Select(constraint => constraint.Lowered.Format()));
     }
 
     [Fact]

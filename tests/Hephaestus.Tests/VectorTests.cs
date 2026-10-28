@@ -18,29 +18,21 @@ public sealed class VectorTests {
     }
 
     [Fact]
-    public void AComparisonOfVectorsHoldsInEveryEntry() {
+    public void AComparisonOfVectorsHoldsInEveryEntryAndAPlainValueStandsForItselfInEach() {
         Assert.Equal("(u0 + v0 < 4) & (u1 + v1 < 5) & (u2 + v2 < 6)", (U + V < [4, 5, 6]).Format());
         Assert.Equal("(u0 <= v0) & (u1 <= v1) & (u2 <= v2)", (U <= V).Format());
         Assert.Equal("(4 > u0) & (5 > u1) & (6 > u2)", ([4, 5, 6] > U).Format());
-    }
-
-    [Fact]
-    public void APlainValueStandsForItselfInEveryEntry() {
         Assert.Equal("(u0 >= 0) & (u1 >= 0) & (u2 >= 0)", (U >= 0).Format());
         Assert.Equal("(1 < u0) & (1 < u1) & (1 < u2)", (1 < U).Format());
         Assert.Equal(["u0 + 1", "u1 + 1", "u2 + 1"], (U + 1).Select(entry => entry.Expression.Format()).Elements);
     }
 
     [Fact]
-    public void TheNegationOfAComparisonIsThatSomeEntryFailsIt() {
-        // U + V is [4, 5, 6]: only the last entry exceeds [4, 5, 5], so neither <= nor > holds.
+    public void VectorsAreEqualWhenEveryEntryIsAndDifferWhenAnyIs() {
+        // U + V is [4, 5, 6]: only the last entry exceeds [4, 5, 5], so neither <= nor > holds, and the negation of <= is that some entry fails it.
         Assert.False(Solution.Value(U + V <= [4, 5, 5]));
         Assert.True(Solution.Value(!(U + V <= [4, 5, 5])));
         Assert.False(Solution.Value(U + V > [4, 5, 5]));
-    }
-
-    [Fact]
-    public void VectorsAreEqualWhenEveryEntryIsAndDifferWhenAnyIs() {
         Assert.True(Solution.Value(U.EqualTo([1, 2, 3])));
         Assert.False(Solution.Value(U.EqualTo(V)));
         Assert.True(Solution.Value(U.NotEqualTo(V)));

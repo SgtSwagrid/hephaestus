@@ -16,18 +16,15 @@ public sealed class ProjectionTests {
         Assert.Equal(NormalForms.Canonical(expected.Normalise()), NormalForms.Canonical(actual.Normalise()));
 
     [Fact]
-    public void TheDifferenceOfTwoPointsIsAQuantity() {
+    public void TheDifferenceOfTwoPointsIsAQuantityAndAPointShiftedByAQuantityIsAPoint() {
         Quantity<TimeSpan> runTime = Finish - Start;
-
-        AssertSameConstraint(FinishSeconds - StartSeconds >= 300, runTime >= TimeSpan.FromMinutes(5));
-    }
-
-    [Fact]
-    public void APointShiftedByAQuantityIsAPoint() {
         Point<DateTime, TimeSpan> earliestFinish = Start + Runtime + TimeSpan.FromMinutes(5);
 
+        AssertSameConstraint(FinishSeconds - StartSeconds >= 300, runTime >= TimeSpan.FromMinutes(5));
         AssertSameConstraint(StartSeconds + RuntimeSeconds + 300 <= FinishSeconds, earliestFinish <= Finish);
         AssertSameConstraint(StartSeconds - RuntimeSeconds - 300 <= FinishSeconds, Start - Runtime - TimeSpan.FromMinutes(5) <= Finish);
+        // A plain delta may come first.
+        AssertSameConstraint(StartSeconds + 300 <= FinishSeconds, TimeSpan.FromMinutes(5) + Start <= Finish);
     }
 
     [Fact]
@@ -43,10 +40,6 @@ public sealed class ProjectionTests {
     }
 
     [Fact]
-    public void APlainDeltaMayComeFirst() =>
-        AssertSameConstraint(StartSeconds + 300 <= FinishSeconds, TimeSpan.FromMinutes(5) + Start <= Finish);
-
-    [Fact]
     public void BoundsMayBePlainValuesOrExpressions() {
         AssertSameConstraint((StartSeconds <= FinishSeconds) & (FinishSeconds <= StartSeconds + 600), Finish.Between(Start, Start + TimeSpan.FromMinutes(10)));
         AssertSameConstraint((0 <= FinishSeconds) & (FinishSeconds <= StartSeconds), Finish.Between(Origin, Start));
@@ -56,8 +49,10 @@ public sealed class ProjectionTests {
     }
 
     [Fact]
-    public void AQuantityCanBeCountedInAPlainUnit() =>
+    public void AQuantityCanBeCountedInAPlainUnitOrMeasuredByAnotherProjectionForUseInAPlainExpression() {
         Assert.Equal((RuntimeSeconds / 60).Normalise(), Runtime.In(TimeSpan.FromMinutes(1)).Normalise());
+        Assert.Equal((RuntimeSeconds / 60).Normalise(), Runtime.In(new TimeSpanProjection(TimeSpan.FromMinutes(1))).Normalise());
+    }
 
     [Fact]
     public void PointsCompareWithPlainValues() {
@@ -75,24 +70,15 @@ public sealed class ProjectionTests {
     }
 
     [Fact]
-    public void QuantitiesInDifferentUnitsAreReconciled() {
+    public void QuantitiesInDifferentUnitsAndPointsWithDifferentOriginsAreReconciled() {
         var minutes = Variable.TimeSpan("minutes", unit: TimeSpan.FromMinutes(1), inWholeUnits: true);
+        var later = Variable.DateTime("later", Origin.AddHours(1));
 
         AssertSameConstraint(RuntimeSeconds + 60 * Variable.Integer("minutes") <= 600, Runtime + minutes <= TimeSpan.FromMinutes(10));
         AssertSameConstraint(Variable.Integer("minutes") + RuntimeSeconds / 60 <= 10, minutes + Runtime <= TimeSpan.FromMinutes(10));
-    }
-
-    [Fact]
-    public void PointsWithDifferentOriginsAreReconciled() {
-        var later = Variable.DateTime("later", Origin.AddHours(1));
-
         AssertSameConstraint(StartSeconds <= Variable.Continuous("later") + 3600, Start <= later);
         AssertSameConstraint((Variable.Continuous("later") + 3600 - StartSeconds).EqualTo(60), (later - Start).EqualTo(TimeSpan.FromMinutes(1)));
     }
-
-    [Fact]
-    public void AQuantityCanBeMeasuredInAnotherUnitForUseInAPlainExpression() =>
-        Assert.Equal((RuntimeSeconds / 60).Normalise(), Runtime.In(new TimeSpanProjection(TimeSpan.FromMinutes(1))).Normalise());
 
     [Fact]
     public void QuantitiesSumUnderTheProjectionOfTheFirst() {
@@ -114,12 +100,6 @@ public sealed class ProjectionTests {
         Assert.Equal(Origin.AddSeconds(135), solution.Value(Start + Runtime));
     }
 
-    [Fact]
-    public void TypedObjectivesUnwrapToTheirUnderlyingExpressions() {
-        Assert.Equal(new SingleObjectiveProblem(Objective.Minimise(Runtime.Expression), BooleanConstant.True), Problem.Minimise(Runtime).SubjectTo(BooleanConstant.True));
-        Assert.Equal(new SingleObjectiveProblem(Objective.Maximise(Start.Expression), BooleanConstant.True), Problem.Maximise(Start).SubjectTo(BooleanConstant.True));
-    }
-
     /// <summary>A type of a modeller's own, projected onto the number line, with an algebra of its own and nothing inherited.</summary>
     private sealed record Money(ILinearExpression Expression, IProjection<decimal> Projection) : ILinearlyEncodable<decimal>;
 
@@ -136,25 +116,6 @@ public sealed class ProjectionTests {
         // Reading, and optimising.
         Assert.Equal(12.5m, Solution.Empty.With(cost, 12.5m).Value(cost));
         Assert.Equal(new Optimisation(ObjectiveSense.Minimise, cost.Expression), Objective.Minimise(cost));
-    }
-
-    [Fact]
-    public void AmountsAndPositionsShareOneComparison() {
-        // Both reach the same operators through ILinearlyEncodable, so neither carries its own.
-        Assert.Equal("start <= 60", (Start <= Origin.AddMinutes(1)).Format());
-        Assert.Equal("runtime <= 60", (Runtime <= TimeSpan.FromMinutes(1)).Format());
-    }
-
-    [Fact]
-    public void ATwoStateTypeIsCarriedByAnIndicator() {
-        var up = Variable.Binary("up");
-        var lift = new Switch(up.Indicator, new DirectionProjection());
-
-        Assert.Equal(Direction.Up, Solution.Empty.With(up, true).Value(lift));
-        Assert.Equal(Direction.Down, Solution.Empty.With(lift, Direction.Down).Value(lift));
-        // Wired the other way round, giving it a direction gives the binary the opposite value.
-        Assert.Equal(Direction.Down, Solution.Empty.With(new Switch((!up).Indicator, new DirectionProjection()), Direction.Up).Value(lift));
-        Assert.Equal("[up] == 1", lift.EqualTo(Direction.Up).Format());
     }
 
     [Fact]
@@ -184,63 +145,37 @@ public sealed class ProjectionTests {
     }
 
     [Fact]
-    public void AnExpressionCanBeSeenAsOneOfAnotherType() {
+    public void AnExpressionCanBeSeenAsOneOfAnotherTypeOrMappedOneWayOnly() {
         var seconds = Variable.TimeSpan("seconds");
 
         var minutes = seconds.Biselect(span => span.TotalMinutes, (double count) => TimeSpan.FromMinutes(count));
+        IReadableExpression<string> written = seconds.Select(span => $"{span.TotalSeconds}s");
+        IWritableExpression<int> fromMinutes = seconds.Preselect((int count) => TimeSpan.FromMinutes(count));
 
         Assert.Equal(2d, Solution.Empty.With(seconds, TimeSpan.FromMinutes(2)).Value(minutes));
         // Still writable, so it may still be constrained.
         Assert.Equal("seconds <= 120", (minutes <= 2d).Format());
-    }
-
-    [Fact]
-    public void SelectLeavesAReadingThatNoConstraintCanMention() {
-        var seconds = Variable.TimeSpan("seconds");
-
-        IReadableExpression<string> written = seconds.Select(span => $"{span.TotalSeconds}s");
-
+        // Select leaves a reading that no constraint can mention ...
         Assert.Equal("90s", Solution.Empty.With(seconds, TimeSpan.FromSeconds(90)).Value(written));
         Assert.IsNotAssignableFrom<IWritableExpression<string>>(written);
-    }
-
-    [Fact]
-    public void AndPreselectLeavesOneNoSolutionCanBeAskedFor() {
-        var seconds = Variable.TimeSpan("seconds");
-
-        IWritableExpression<int> fromMinutes = seconds.Preselect((int count) => TimeSpan.FromMinutes(count));
-
+        // ... and Preselect one that no solution can be asked for.
         Assert.Equal<double>([120], fromMinutes.Encoder.Encode(2));
         Assert.IsNotAssignableFrom<IReadableExpression<int>>(fromMinutes);
     }
 
     [Fact]
-    public void AProjectionCanBeSeenAsOneOfAnotherType() {
+    public void AProjectionCanBeSeenAsOneOfAnotherTypeOrMappedOneWayOnly() {
         var seconds = new TimeSpanProjection(TimeSpan.FromSeconds(1));
 
         var minutes = seconds.Biselect(span => span.TotalMinutes, (double count) => TimeSpan.FromMinutes(count));
+        IDecoder<string, double> written = seconds.Select(span => $"{span.TotalSeconds}s");
+        IEncoder<int, double> fromMinutes = seconds.Preselect((int count) => TimeSpan.FromMinutes(count));
 
         Assert.Equal(2, minutes.Decode(120));
         Assert.Equal(120, minutes.Encode(2));
-    }
-
-    [Fact]
-    public void AndSelectedIntoAReadingNoConstraintCouldMention() {
-        var seconds = new TimeSpanProjection(TimeSpan.FromSeconds(1));
-
-        IDecoder<string, double> written = seconds.Select(span => $"{span.TotalSeconds}s");
-
         Assert.Equal("90s", written.Decode(90));
         // It reads, and that is all: there is no Encode to put one back into a model.
         Assert.IsNotAssignableFrom<IEncoder<string, double>>(written);
-    }
-
-    [Fact]
-    public void AnEncoderCanTakeSomethingElseFirst() {
-        var seconds = new TimeSpanProjection(TimeSpan.FromSeconds(1));
-
-        IEncoder<int, double> fromMinutes = seconds.Preselect((int count) => TimeSpan.FromMinutes(count));
-
         Assert.Equal(120, fromMinutes.Encode(2));
     }
 

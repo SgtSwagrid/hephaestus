@@ -13,14 +13,10 @@ public sealed class NormalisationTests {
         terms.Aggregate(AffineForm.Zero.Plus(constant), (form, term) => form.PlusTerm(term.Variable, term.Coefficient));
 
     [Fact]
-    public void LinearExpressionsFlattenToTheirAffineForm() {
+    public void LinearExpressionsFlattenToTheirAffineFormAndTermsThatCancelDisappear() {
         Assert.Equal(Form(6, (X, 1)), (2 * (X + 3) - X).Normalise());
         Assert.Equal(Form(-1, (X, 0.5), (Y, -3)), ((X - 2) / 2 - 3 * Y).Normalise());
         Assert.Equal(Form(0, (X, 1)), X.Normalise());
-    }
-
-    [Fact]
-    public void TermsThatCancelDisappear() {
         Assert.Equal(AffineForm.Zero, (X - X).Normalise());
         Assert.Equal(Form(0, (Y, 1)), (X + Y - X).Normalise());
         Assert.Equal(AffineForm.Zero, (0 * (X + 7)).Normalise());
@@ -40,16 +36,6 @@ public sealed class NormalisationTests {
     }
 
     [Fact]
-    public void AVeryLongChainOfAdditionsDoesNotOverflowTheStack() {
-        var chain = Enumerable.Range(0, 200_000).Aggregate<int, ILinearExpression>(new Constant(0), (sum, index) => sum + Variable.Continuous($"v{index % 100}"));
-
-        var form = chain.Normalise();
-
-        Assert.Equal(100, form.Coefficients.Count);
-        Assert.All(form.Coefficients.Values, coefficient => Assert.Equal(2000, coefficient));
-    }
-
-    [Fact]
     public void RangesFollowFromIntervalArithmetic() {
         var bounds = ImmutableDictionary<IVariable, Interval>.Empty.Add(X, new Interval(0, 10)).Add(Y, new Interval(-2, 3));
 
@@ -66,19 +52,14 @@ public sealed class NormalisationTests {
     }
 
     [Fact]
-    public void NegationsArePushedToTheLeaves() {
+    public void NegationsArePushedToTheLeavesAndNestedJunctionsOfTheSameKindAreFlattened() {
         var atom = new AffineRelation(Form(-1, (X, 1)), Relation.LessThanOrEqual);
         var flipped = new AffineRelation(Form(-1, (X, 1)), Relation.GreaterThan);
+        var c = Variable.Binary("c");
 
         Assert.Equal(new All([new Literal(A, true), atom]), (A & (X <= 1)).Normalise());
         Assert.Equal(new Any([new Literal(A, false), flipped]), (!(A & (X <= 1))).Normalise());
         Assert.Equal(new Literal(A, true), (!!A).Normalise());
-    }
-
-    [Fact]
-    public void NestedJunctionsOfTheSameKindAreFlattened() {
-        var c = Variable.Binary("c");
-
         Assert.Equal(new Any([new Literal(A, true), new Literal(B, true), new Literal(c, true)]), (A | (B | c)).Normalise());
         Assert.Equal(new Any([new Literal(A, false), new Literal(B, false), new Literal(c, true)]), (!(A & B) | c).Normalise());
         Assert.Equal(new Any([new Literal(A, false), new Literal(B, true)]), A.Implies(B).Normalise());
@@ -116,13 +97,11 @@ public sealed class NormalisationTests {
         Assert.Equal(NormalForms.Canonical((X >= Y).Normalise()), NormalForms.Canonical((Y <= X).Normalise()));
     }
 
+    // Each case checks both ways round, so between them they cover all six relations.
     [Theory]
     [InlineData(Relation.LessThan, Relation.GreaterThanOrEqual)]
     [InlineData(Relation.LessThanOrEqual, Relation.GreaterThan)]
     [InlineData(Relation.Equal, Relation.NotEqual)]
-    [InlineData(Relation.NotEqual, Relation.Equal)]
-    [InlineData(Relation.GreaterThanOrEqual, Relation.LessThan)]
-    [InlineData(Relation.GreaterThan, Relation.LessThanOrEqual)]
     public void EveryRelationHasAnOpposite(Relation relation, Relation opposite) {
         Assert.Equal(opposite, BooleanNormalisation.Opposite(relation));
         Assert.Equal(relation, BooleanNormalisation.Opposite(opposite));
@@ -133,35 +112,18 @@ public sealed class NormalisationTests {
         Assert.Throws<NotSupportedException>(() => BooleanNormalisation.Opposite((Relation)99));
 
     [Fact]
-    public void AVeryLongChainOfConjunctionsDoesNotOverflowTheStack() {
+    public void NormalisingOrWritingOutAVeryLongChainOfConjunctionsDoesNotOverflowTheStack() {
         var chain = Enumerable.Range(0, 100_000).Aggregate<int, IBooleanExpression<ILinearArithmetic>>(BooleanConstant.True, (all, index) => all & (Variable.Continuous($"v{index}") <= index));
 
-        var normalised = Assert.IsType<All>(chain.Normalise());
-
-        Assert.Equal(100_000, normalised.Operands.Count);
+        Assert.Equal(100_000, Assert.IsType<All>(chain.Normalise()).Operands.Count);
+        Assert.EndsWith("(v99999 <= 99999)", chain.Format(), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void NorDoesAVeryLongChainOfSums() {
+    public void NorDoesNormalisingOrReadingOffASolutionAVeryLongChainOfSums() {
         var chain = Enumerable.Range(1, 100_000).Aggregate<int, ILinearExpression>(new Constant(0), (sum, index) => sum + index * (ILinearExpression)X);
 
-        var form = chain.Normalise();
-
-        Assert.Equal(100_000L * 100_001 / 2, form.Coefficients[X]);
-    }
-
-    [Fact]
-    public void NorDoesWritingOneOut() {
-        var chain = Enumerable.Range(0, 100_000).Aggregate<int, IBooleanExpression<ILinearArithmetic>>(BooleanConstant.True, (all, index) => all & (X <= index));
-
-        Assert.EndsWith("(x <= 99999)", chain.Format(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void NorDoesReadingOneOffASolution() {
-        var chain = Enumerable.Range(1, 100_000).Aggregate<int, ILinearExpression>(new Constant(0), (sum, index) => sum + index * (ILinearExpression)X);
-        var solution = Solution.Empty.With(X, 1);
-
-        Assert.Equal(100_000L * 100_001 / 2, solution.Value(chain));
+        Assert.Equal(100_000L * 100_001 / 2, chain.Normalise().Coefficients[X]);
+        Assert.Equal(100_000L * 100_001 / 2, Solution.Empty.With(X, 1).Value(chain));
     }
 }

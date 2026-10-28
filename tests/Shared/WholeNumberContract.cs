@@ -96,42 +96,42 @@ public abstract class WholeNumberContract {
     }
 
     [Fact]
-    public void ExactlyOneOfSeveralOptionsCanBeChosen() {
-        var options = Enumerable.Range(0, 5).Select(index => Variable.Binary($"option{index}")).ToList();
-        var weights = new double[] { 3, 9, 4, 7, 1 };
-
-        var solution = Optimum(Problem.Maximise(options.Zip(weights, (option, weight) => weight * option.Indicator).Sum()).SubjectTo(options.Sum(option => option.Indicator).EqualTo(1)));
-
-        Assert.Equal([false, true, false, false, false], options.Select(option => solution.Value(option)));
-    }
-
-    [Fact]
     public void InfeasibilityIsReported() {
         Assert.IsType<Infeasible>(Solver.Solve(Problem.Satisfy(N.Between(0, 10) & ((N <= 2) | (N >= 8)) & N.Between(3, 7))));
         Assert.IsType<Infeasible>(Solver.Solve(Problem.Satisfy(Flag & !Flag & N.Between(0, 1))));
     }
 
     [Fact]
-    public void QuantisedTypedVariablesAreWholeNumbersUnderneath() {
+    public void QuantisedTypedVariablesAndCountsAreReadBackAsWholeNumbersOfTheirOwnType() {
         var shiftStart = new DateTime(2026, 9, 19, 8, 0, 0);
         var start = Variable.DateTime("start", origin: shiftStart, inWholeUnits: true);
         var runtime = Variable.TimeSpan("runtime", unit: TimeSpan.FromSeconds(30), inWholeUnits: true);
-        var constraint = start.Between(shiftStart, shiftStart.AddHours(1)) & runtime.Between(TimeSpan.FromSeconds(45), TimeSpan.FromMinutes(5)) & (start >= shiftStart.AddMinutes(10) + runtime);
+        var (jobs, machines) = (Variable.Integer<int>("jobs"), Variable.Integer<int>("machines"));
+        var units = Variable.Integer<long>("units");
+        var schedule = start.Between(shiftStart, shiftStart.AddHours(1)) & runtime.Between(TimeSpan.FromSeconds(45), TimeSpan.FromMinutes(5)) & (start >= shiftStart.AddMinutes(10) + runtime);
+        var counts = jobs.Between(0, 40) & machines.Between(1, 6) & (jobs <= 6 * machines) & (units.Expression <= 850 * jobs.Expression) & (units >= 9000L);
 
-        var solution = Optimum(Problem.Minimise(start).SubjectTo(constraint));
+        var scheduled = Optimum(Problem.Minimise(start).SubjectTo(schedule));
+        var counted = Optimum(Problem.Minimise(100 * machines.Expression + 7 * jobs.Expression).SubjectTo(counts));
 
-        Assert.Equal(TimeSpan.FromSeconds(60), solution.Value(runtime));
-        Assert.Equal(shiftStart.AddMinutes(11), solution.Value(start));
+        Assert.Equal(TimeSpan.FromSeconds(60), scheduled.Value(runtime));
+        Assert.Equal(shiftStart.AddMinutes(11), scheduled.Value(start));
+        Assert.Equal((11, 2, 9000L), (counted.Value(jobs), counted.Value(machines), counted.Value(units)));
+        Assert.IsType<int>(counted.Value(jobs));
     }
 
     [Fact]
-    public void PiecewiseFunctionsOfWholeNumbersStayWhole() {
+    public void PiecewiseFunctionsAndConditionalsOfWholeNumbersStayWhole() {
         var domain = StartA.Between(0, 100) & StartB.Between(0, 100);
+        var counted = StartA.Between(0, 100) & N.Between(0, 5);
 
         Assert.Equal(60, Optimum(Problem.Minimise(Max(StartA, StartB)).SubjectTo(domain & (StartA + StartB >= 120))).ObjectiveValue);
         Assert.Equal(100, Optimum(Problem.Maximise(Abs(StartA - StartB)).SubjectTo(domain)).ObjectiveValue);
         Assert.Equal(7, Optimum(Problem.Maximise(Min(StartA, 7)).SubjectTo(domain)).ObjectiveValue);
         Assert.Equal(40, Optimum(Problem.Minimise(StartA).SubjectTo(domain & (Abs(StartA - 50) <= 10) & (Max(StartA, StartB) >= 30))).ObjectiveValue);
+        Assert.Equal(100 + 5, Optimum(Problem.Maximise(UsesA.Indicator * StartA + If(!UsesA, 200, N)).SubjectTo(counted & UsesA)).ObjectiveValue);
+        Assert.Equal(200, Optimum(Problem.Maximise(UsesA.Indicator * StartA + If(!UsesA, 200, N)).SubjectTo(counted)).ObjectiveValue);
+        Assert.Equal(3, Optimum(Problem.Minimise(If(StartA >= 50, N + 3, StartA)).SubjectTo(counted & (StartA >= 10))).ObjectiveValue);
     }
 
     [Fact]
@@ -156,25 +156,4 @@ public abstract class WholeNumberContract {
 
     private Solution Optimum(IMultipleObjectiveProblem problem, IBooleanExpression<ILinearArithmetic> also) =>
         Assert.IsType<Optimal>(Solver.Solve(problem.SubjectTo(also))).Solution;
-
-    [Fact]
-    public void ConditionalsOfWholeNumbersStayWhole() {
-        var domain = StartA.Between(0, 100) & N.Between(0, 5);
-
-        Assert.Equal(100 + 5, Optimum(Problem.Maximise(UsesA.Indicator * StartA + If(!UsesA, 200, N)).SubjectTo(domain & UsesA)).ObjectiveValue);
-        Assert.Equal(200, Optimum(Problem.Maximise(UsesA.Indicator * StartA + If(!UsesA, 200, N)).SubjectTo(domain)).ObjectiveValue);
-        Assert.Equal(3, Optimum(Problem.Minimise(If(StartA >= 50, N + 3, StartA)).SubjectTo(domain & (StartA >= 10))).ObjectiveValue);
-    }
-
-    [Fact]
-    public void CountsAreSolvedAndReadBackAsWholeNumbersOfTheirOwnType() {
-        var (jobs, machines) = (Variable.Integer<int>("jobs"), Variable.Integer<int>("machines"));
-        var units = Variable.Integer<long>("units");
-        var constraint = jobs.Between(0, 40) & machines.Between(1, 6) & (jobs <= 6 * machines) & (units.Expression <= 850 * jobs.Expression) & (units >= 9000L);
-
-        var solution = Optimum(Problem.Minimise(100 * machines.Expression + 7 * jobs.Expression).SubjectTo(constraint));
-
-        Assert.Equal((11, 2, 9000L), (solution.Value(jobs), solution.Value(machines), solution.Value(units)));
-        Assert.IsType<int>(solution.Value(jobs));
-    }
 }

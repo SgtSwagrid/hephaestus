@@ -9,6 +9,8 @@ public sealed class PiecewiseTests {
     private static readonly ContinuousVariable Z = Variable.Continuous("z");
     private static readonly IntegerVariable N = Variable.Integer("n");
     private static readonly IntegerVariable M = Variable.Integer("m");
+    private static readonly BinaryVariable Runs = Variable.Binary("runs");
+    private static readonly BinaryVariable Stops = Variable.Binary("stops");
     private static readonly IBooleanExpression<ILinearArithmetic> Box = X.Between(0, 10) & Y.Between(0, 10);
 
     private static IEnumerable<string> Rows(IOneShotProblem problem) => problem.Encode().Rows.Select(row => row.Format()).Order(StringComparer.Ordinal);
@@ -24,22 +26,23 @@ public sealed class PiecewiseTests {
         Assert.Equal(new Maximum(new Maximum(X, Y), new Maximum(Z, N)), Max([X, Y, Z, N]));
         Assert.Equal(new Minimum(X, new Minimum(Y, Z)), Min([X, Y, Z]));
         Assert.Throws<InvalidOperationException>(() => Max(Array.Empty<ILinearExpression>()));
+        // So do a conditional and the product with a binary variable.
+        Assert.Equal(new Conditional(X >= 5, Y, Z), If(X >= 5, Y, Z));
+        Assert.Equal(new Conditional(Runs, X, new Constant(0)), If(Runs, X));
+        Assert.Equal(new Conditional(Runs, new Constant(3), new Constant(1)), If(Runs, 3, 1));
+        Assert.Equal(new Conditional(Runs, X + 1, new Constant(0)), Runs.Indicator * (X + 1));
+        Assert.Equal(new Conditional(Runs, X, new Constant(0)), X * Runs.Indicator);
+        Assert.Equal(new Conditional(Runs, new Indicator(Stops), new Constant(0)), Runs.Indicator * Stops.Indicator);
+        Assert.Equal(new Product(2, new Indicator(Runs)), 2 * Runs.Indicator);
     }
 
     [Fact]
-    public void TheyAreWrittenTheWayTheyAreRead() {
-        Assert.Equal("max(x, y + 1) <= 2*abs(x - y)", (Max(X, Y + 1) <= 2 * Abs(X - Y)).Format());
-        Assert.Equal("-min(x, 3)", (-Min(X, 3)).Format());
-    }
-
-    [Fact]
-    public void TheirVariablesAreThoseOfTheirOperands() =>
-        Assert.Equal<IVariable>([X, Y, Z], [.. (Max(X, Y) + Abs(Z) <= 1).Variables]);
-
-    [Fact]
-    public void TheyAreReadOffASolutionDirectly() {
+    public void TheyAreWrittenAndReadOffASolutionTheWayTheyAreRead() {
         var solution = new Solution(ImmutableSortedDictionary.Create<IVariable, double>(VariableOrder.Comparer).Add(X, 3).Add(Y, -7), 0);
 
+        Assert.Equal("max(x, y + 1) <= 2*abs(x - y)", (Max(X, Y + 1) <= 2 * Abs(X - Y)).Format());
+        Assert.Equal("-min(x, 3)", (-Min(X, 3)).Format());
+        Assert.Equal<IVariable>([X, Y, Z], [.. (Max(X, Y) + Abs(Z) <= 1).Variables]);
         Assert.Equal(3, solution.Value(Max(X, Y)));
         Assert.Equal(-7, solution.Value(Min(X, Y)));
         Assert.Equal(10, solution.Value(Abs(X - Y)));
@@ -78,30 +81,21 @@ public sealed class PiecewiseTests {
     }
 
     [Fact]
-    public void AnAbsoluteValueBoundedFromAboveIsTwoPlainRows() =>
+    public void AnAbsoluteValueBoundedFromAboveIsTwoPlainRowsButUsedBothWaysItIsTiedBothWays() {
         Assert.Equal(["-_max0 + x - y <= 0", "-_max0 - x + y <= 0"], Rows(Problem.Satisfy(Box & (Abs(X - Y) <= 3))));
-
-    [Fact]
-    public void UsedBothWaysItIsTiedBothWays() =>
         Assert.Equal(["_aux0", "_max0"], Auxiliaries(Problem.Minimise(Abs(X - 5)).SubjectTo(X.Between(0, 10) & (Abs(X - 5) >= 2))));
+    }
 
     [Fact]
-    public void EqualFunctionsShareOneVariableHoweverTheyWereWritten() =>
+    public void EqualFunctionsShareOneVariableHoweverTheyWereWritten() {
         Assert.Equal(["_max0", "_max1"], Auxiliaries(Problem.Satisfy(Box & (Max(X + Y, 3) <= 8) & (Max(Y + X, 3) + X <= 9) & (Abs(X) <= 4))));
-
-    [Fact]
-    public void AMaximumIsTheSameMaximumEitherWayRound() =>
+        // A maximum is the same maximum either way round.
         Assert.Equal(["_max0"], Auxiliaries(Problem.Minimise(Max(X, Y) + Max(Y, X)).SubjectTo(Box)));
-
-    [Fact]
-    public void SoIsAnAbsoluteValue() =>
-        // |x - y| and |y - x| are max(x - y, y - x) and max(y - x, x - y), which are one maximum.
+        // So is an absolute value: |x - y| and |y - x| are max(x - y, y - x) and max(y - x, x - y), which are one maximum.
         Assert.Equal(["_max0"], Auxiliaries(Problem.Minimise(Abs(X - Y) + Abs(Y - X)).SubjectTo(Box)));
-
-    [Fact]
-    public void ButAMinimumIsNotAMaximum() =>
-        // The minimum is max(-y, -x), a different maximum; pushing it down as well costs the one binary.
+        // But a minimum is not a maximum: it is max(-y, -x), a different maximum, and pushing it down as well costs the one binary.
         Assert.Equal(["_aux0", "_max0", "_max1"], Auxiliaries(Problem.Minimise(Max(X, Y) + Min(Y, X)).SubjectTo(Box)));
+    }
 
     [Fact]
     public void LoweredConstraintsKnowWhichOnesWereWritten() {
@@ -115,15 +109,6 @@ public sealed class PiecewiseTests {
         // What ties the maximum to its operands comes after, and nobody wrote it.
         Assert.NotEmpty(constraints.Skip(written.Conjuncts.Length));
         Assert.All(constraints.Skip(written.Conjuncts.Length), constraint => Assert.Null(constraint.Written));
-    }
-
-    [Fact]
-    public void AProblemWithNothingToLowerIsAllAsWritten() {
-        var written = Box & (X <= 8);
-
-        var constraints = Problem.Minimise(X).SubjectTo(written).Linearise().Constraints;
-
-        Assert.Equal(written.Conjuncts, constraints.Select(constraint => constraint.Written));
     }
 
     [Fact]
@@ -167,20 +152,6 @@ public sealed class PiecewiseTests {
         Assert.Equal(TimeSpan.FromMinutes(3), solution.Value(Abs(delay)));
         Assert.Equal(TimeSpan.FromMinutes(20), solution.Value(Max(delay, first - second)));
         Assert.Equal(TimeSpan.FromMinutes(-3), solution.Value(Min([delay, first - second, Abs(delay)])));
-    }
-
-    private static readonly BinaryVariable Runs = Variable.Binary("runs");
-    private static readonly BinaryVariable Stops = Variable.Binary("stops");
-
-    [Fact]
-    public void AConditionalAndTheProductWithABinaryVariableOnlyBuildData() {
-        Assert.Equal(new Conditional(X >= 5, Y, Z), If(X >= 5, Y, Z));
-        Assert.Equal(new Conditional(Runs, X, new Constant(0)), If(Runs, X));
-        Assert.Equal(new Conditional(Runs, new Constant(3), new Constant(1)), If(Runs, 3, 1));
-        Assert.Equal(new Conditional(Runs, X + 1, new Constant(0)), Runs.Indicator * (X + 1));
-        Assert.Equal(new Conditional(Runs, X, new Constant(0)), X * Runs.Indicator);
-        Assert.Equal(new Conditional(Runs, new Indicator(Stops), new Constant(0)), Runs.Indicator * Stops.Indicator);
-        Assert.Equal(new Product(2, new Indicator(Runs)), 2 * Runs.Indicator);
     }
 
     [Fact]

@@ -36,15 +36,17 @@ public sealed class NamesAndConflictsTests {
     public void ANamedExpressionIsWrittenByItsNameWhereverItAppears() {
         var separated = ((M + 2 <= N) | (N + 2 <= M)).WithName("separated");
         var conflictFree = !A | separated;
+        var origin = new DateTime(2026, 9, 19, 8, 0, 0);
+        var (finish, start) = (Variable.DateTime("finish", origin), Variable.DateTime("start", origin));
 
         Assert.Equal("separated", separated.Format());
         Assert.Equal("!a | separated", conflictFree.Format());
         Assert.Equal("2*turnaround + m <= 9", (2 * (N - M).WithName("turnaround") + M <= 9).Format());
         Assert.Equal("(m + 2 <= n) | (n + 2 <= m)", ((INamedConstraint<ILinearArithmetic>)separated).Expression.Format());
-    }
-
-    [Fact]
-    public void AnExpressionGoesByItsNameOrElseByTheWayItIsWritten() {
+        // Typed expressions can be named too.
+        Assert.Equal("runtime >= 45", ((start - finish).WithName("runtime") >= TimeSpan.FromSeconds(45)).Format());
+        Assert.Equal("release <= 600", ((finish + TimeSpan.FromMinutes(2)).WithName("release") <= origin.AddMinutes(10)).Format());
+        // An expression goes by its name, or else by the way it is written.
         Assert.Equal("m <= n + 1", (M <= N + 1).Name);
         Assert.Equal("precedence", (M <= N + 1).WithName("precedence").Name);
         Assert.Equal("a", A.Name);
@@ -60,15 +62,6 @@ public sealed class NamesAndConflictsTests {
         Assert.Equal<IVariable>([.. plain.Variables], [.. named.Variables]);
         Assert.True(new Solution(Solution.Empty.Values.Add(M, 3).Add(N, 1).Add(A, 0), 0).Value(named));
         Assert.Equal((M + 1).Normalise(), (M.WithName("emm") + 1).Normalise());
-    }
-
-    [Fact]
-    public void TypedExpressionsCanBeNamedToo() {
-        var origin = new DateTime(2026, 9, 19, 8, 0, 0);
-        var (finish, start) = (Variable.DateTime("finish", origin), Variable.DateTime("start", origin));
-
-        Assert.Equal("runtime >= 45", ((start - finish).WithName("runtime") >= TimeSpan.FromSeconds(45)).Format());
-        Assert.Equal("release <= 600", ((finish + TimeSpan.FromMinutes(2)).WithName("release") <= origin.AddMinutes(10)).Format());
     }
 
     [Fact]
@@ -99,16 +92,11 @@ public sealed class NamesAndConflictsTests {
     }
 
     [Fact]
-    public void BoundsTakePartInConflictsLikeAnyOtherConstraint() =>
+    public void BoundsTakePartInConflictsAndASingleConstraintCanBeOneAllByItselfButAFeasibleProblemHasNone() {
         Assert.Equal(["5 <= m", "n <= 6", "m + 2 <= n"], Solver.FindConflict(Problem.Minimise(M).SubjectTo(M.Between(5, 5) & N.Between(0, 6) & (M + 2 <= N))).Select(conjunct => conjunct.Name));
-
-    [Fact]
-    public void ASingleConstraintCanBeAConflictAllByItself() =>
         Assert.Equal(["impossible"], Solver.FindConflict(M.Between(0, 3) & ((M >= 2) & (M <= 1)).WithName("impossible") & (N >= 0)).Select(conjunct => conjunct.Name));
-
-    [Fact]
-    public void AFeasibleProblemHasNoConflict() =>
         Assert.Empty(Solver.FindConflict(M.Between(0, 3) & (M >= 2)));
+    }
 
     [Fact]
     public void AConflictAmongManyConstraintsIsFoundInFewSolves() {
@@ -132,9 +120,13 @@ public sealed class NamesAndConflictsTests {
         Assert.Contains("Out of time", Assert.Throws<InvalidOperationException>(() => new MilpSolver(new WaveringBackend()).FindConflict(M.Between(0, 3) & (M >= 4))).Message);
 
     [Fact]
-    public void BoundsKnowTheConstraintThatStatesThem() {
+    public void BoundsKnowTheConstraintThatStatesThemAndWhereTwoStateTheSameBoundTheOneWrittenFirst() {
         var (loose, tight, floor) = ((M <= 8).WithName("loose"), (M <= 5).WithName("tight"), (M >= 1).WithName("floor"));
         var encoded = Problem.Minimise(Max(M, N)).SubjectTo(loose & tight & floor & N.EqualTo(3).WithName("fixed") & A).EncodeLogic();
+        var twice =
+            (M <= 5).WithName("upper first") & (M <= 5).WithName("upper second")
+            & (M >= 1).WithName("lower first") & (M >= 1).WithName("lower second");
+        var origins = Problem.Minimise(M).SubjectTo(twice).EncodeLogic().BoundOrigins[M];
 
         Assert.Equal(new BoundOrigin(floor, tight), encoded.BoundOrigins[M]);
         Assert.Equal("fixed", encoded.BoundOrigins[N].Lower!.Name);
@@ -143,18 +135,8 @@ public sealed class NamesAndConflictsTests {
         Assert.Null(encoded.BoundOrigins[A].Upper);
         // The variable that stands for the maximum is bounded by derivation, which is nobody's constraint.
         Assert.DoesNotContain(encoded.Columns.Single(column => column.Variable.Name == "_max0").Variable, encoded.BoundOrigins.Keys);
-    }
-
-    [Fact]
-    public void WhereTwoConstraintsStateTheSameBoundTheOneWrittenFirstIsNamed() {
-        var constraint =
-            (M <= 5).WithName("upper first") & (M <= 5).WithName("upper second")
-            & (M >= 1).WithName("lower first") & (M >= 1).WithName("lower second");
-
-        var encoded = Problem.Minimise(M).SubjectTo(constraint).EncodeLogic();
-
-        Assert.Equal("lower first", encoded.BoundOrigins[M].Lower!.Name);
-        Assert.Equal("upper first", encoded.BoundOrigins[M].Upper!.Name);
+        Assert.Equal("lower first", origins.Lower!.Name);
+        Assert.Equal("upper first", origins.Upper!.Name);
     }
 
     /// <summary>Offers a fixed answer when asked to narrow a conflict down, and otherwise solves by trying everything.</summary>

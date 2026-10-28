@@ -26,11 +26,14 @@ public sealed class StatisticsAndOptionsTests {
             _ => throw new ArgumentOutOfRangeException(nameof(solver)),
         };
 
+    private static readonly SolverOptions CommonOptions = new(TimeLimit: TimeSpan.FromSeconds(30), RelativeGap: 0, Threads: 2, AbsoluteGap: 0, Seed: 7);
+
     [Theory]
     [MemberData(nameof(BoundingSolvers))]
-    public void AnOptimalResultIsTightAgainstItsBound(string solver) {
-        var result = Assert.IsType<Optimal>(Create(solver).Solve(Queue));
+    public void TheCommonOptionsAreAcceptedAndAnOptimalResultIsTightAgainstItsBound(string solver) {
+        var result = Assert.IsType<Optimal>(Create(solver, CommonOptions).Solve(Queue));
 
+        Assert.Equal(900, result.Solution.ObjectiveValue);
         Assert.Equal(900, result.Statistics.BestBound!.Value, precision: 3);
         Assert.Equal(0, result.AbsoluteGap!.Value, precision: 3);
         Assert.Equal(0, result.RelativeGap!.Value, precision: 6);
@@ -39,9 +42,10 @@ public sealed class StatisticsAndOptionsTests {
     }
 
     [Fact]
-    public void ASolverWithoutBoundsReportsItsTimesAndNoGap() {
-        var result = Assert.IsType<Optimal>(Create("Z3").Solve(Queue));
+    public void ASolverWithoutBoundsAcceptsTheCommonOptionsAndReportsItsTimesAndNoGap() {
+        var result = Assert.IsType<Optimal>(Create("Z3", CommonOptions).Solve(Queue));
 
+        Assert.Equal(900, result.Solution.ObjectiveValue);
         Assert.True(result.Statistics.SolvingTime > TimeSpan.Zero);
         Assert.Null(result.Statistics.BestBound);
         Assert.Null(result.RelativeGap);
@@ -54,12 +58,6 @@ public sealed class StatisticsAndOptionsTests {
     [Fact]
     public void InfeasibilityStillReportsItsTimes() =>
         Assert.True(Assert.IsType<Infeasible>(Create("SCIP").Solve(Problem.Satisfy(Queue.Constraint & (Slots.Sum() <= 899)))).Statistics.SolvingTime > TimeSpan.Zero);
-
-    [Theory]
-    [MemberData(nameof(BoundingSolvers))]
-    [InlineData("Z3")]
-    public void TheCommonOptionsAreAccepted(string solver) =>
-        Assert.Equal(900, Assert.IsType<Optimal>(Create(solver, new SolverOptions(TimeLimit: TimeSpan.FromSeconds(30), RelativeGap: 0, Threads: 2, AbsoluteGap: 0, Seed: 7)).Solve(Queue)).Solution.ObjectiveValue);
 
     [Theory]
     [InlineData("SCIP", "limits/nodes", "100000")]

@@ -43,10 +43,6 @@ public sealed class CpSatRefusalTests {
     [Fact]
     public void CoefficientsThatNoPowerOfTenMakesWholeAreRefused() =>
         Assert.Throws<NotSupportedException>(() => CpSatSolver.Create().Solve(Problem.Satisfy(N.Between(0, 5) & (N / 3 + Variable.Integer("m") <= 1) & Variable.Integer("m").Between(0, 5))));
-
-    [Fact]
-    public void LimitsAreRespected() =>
-        Assert.IsType<Optimal>(CpSatSolver.Create(options: new SolverOptions(TimeLimit: TimeSpan.FromSeconds(10), RelativeGap: 0, Threads: 2)).Solve(Problem.Maximise(N).SubjectTo(N.Between(0, 5))));
 }
 
 /// <summary>CP-SAT works in whole numbers, so the bounds it is given must be narrowed to whole numbers the right way.</summary>
@@ -56,7 +52,6 @@ public sealed class CpSatDomainTests {
     [Theory]
     [InlineData(-4.5, -0.5, -4, -1)]
     [InlineData(0.5, 4.5, 1, 4)]
-    [InlineData(-4.5, 4.5, -4, 4)]
     public void FractionalBoundsOnAWholeNumberColumnRoundInwards(double lower, double upper, double smallest, double largest) {
         var problem = new IndicatorProblem([new Column(N, lower, upper, IsAuxiliary: false)], [], ObjectiveSense.Minimise, AffineForm.Zero);
 

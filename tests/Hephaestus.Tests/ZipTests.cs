@@ -42,15 +42,12 @@ public sealed class ZipTests {
         Assert.Equal(NormalForms.Canonical(expected.Normalise()), NormalForms.Canonical(actual.Normalise()));
 
     [Fact]
-    public void AZipOfANumberAndATruthIsReadAsAPair() {
+    public void AZipOfANumberAndATruthHasTheComponentsOfBothInOrderAndIsReadAsAPair() {
         var solution = Solution.Empty.With(Start, Origin.AddMinutes(5)).With(Up, true);
 
+        Assert.Equal([Start.Expression, Up.Indicator], Start.Zip(Lift).Components);
         Assert.Equal((Origin.AddMinutes(5), Direction.Up), solution.Value(Start.Zip(Lift)));
     }
-
-    [Fact]
-    public void AZipHasTheComponentsOfBothInOrder() =>
-        Assert.Equal([Start.Expression, Up.Indicator], Start.Zip(Lift).Components);
 
     [Fact]
     public void ZipsAndSequencesOfTheSameThingsAreEqual() {
@@ -63,17 +60,17 @@ public sealed class ZipTests {
     public void ATwoStateTypeIsReadPinnedAndGivenAValueLikeAnyOther() {
         Assert.Equal(Direction.Up, Solution.Empty.With(Lift, Direction.Up).Value(Lift));
         Assert.Equal(Direction.Down, Solution.Empty.With(Lift, Direction.Down).Value(Lift));
+        // Wired the other way round, giving it a direction gives the binary the opposite value.
+        Assert.Equal(Direction.Down, Solution.Empty.With(new Switch((!Up).Indicator, new DirectionProjection()), Direction.Up).Value(Lift));
         Assert.Equal("[up] == 1", Lift.EqualTo(Direction.Up).Format());
         AssertEquivalent(!Up, Lift.EqualTo(Direction.Down));
     }
 
     [Fact]
-    public void ZippedValuesAreEqualWhenEveryEntryIs() =>
+    public void ZippedValuesAreEqualWhenEveryEntryIsAndDifferWhenAnyEntryDoes() {
         AssertEquivalent((Runtime <= TimeSpan.FromMinutes(1)) & (Runtime >= TimeSpan.FromMinutes(1)) & Up, Runtime.Zip(Lift).EqualTo((TimeSpan.FromMinutes(1), Direction.Up)));
-
-    [Fact]
-    public void ZippedValuesDifferWhenAnyEntryDoes() =>
         AssertEquivalent((Runtime < TimeSpan.FromMinutes(1)) | (Runtime > TimeSpan.FromMinutes(1)) | !Up, Runtime.Zip(Lift).NotEqualTo((TimeSpan.FromMinutes(1), Direction.Up)));
+    }
 
     [Fact]
     public void TruthsAreOrderedByImplicationFalseBeforeTrue() {
@@ -105,25 +102,18 @@ public sealed class ZipTests {
         AssertSameConstraint(
             (runtime <= 60 * minutes) & (Variable.Continuous("start") <= Variable.Continuous("later") + 3600),
             Runtime.Zip(Start) <= Minutes.Zip(later));
+        // A truth under an opposite projection is negated.
+        AssertEquivalent(Up.Iff(!Down), Lift.EqualTo(new Switch(Down.Indicator, new FlippedProjection())));
     }
 
     [Fact]
-    public void EntriesInAnotherOrderAreReconciledEntryByEntry() {
+    public void EntriesInAnotherOrderAreReconciledEntryByEntryWhateverTheirKinds() {
         var otherX = Variable.Continuous<double>("otherX");
         var otherY = Variable.Continuous<double>("otherY");
         var swapped = otherY.Zip(otherX).Biselect(pair => (pair.Item2, pair.Item1), pair => (pair.Item2, pair.Item1));
-
-        AssertSameConstraint(X.Expression.EqualTo(otherX.Expression) & Y.Expression.EqualTo(otherY.Expression), X.Zip(Y).EqualTo(swapped));
-    }
-
-    [Fact]
-    public void ATruthUnderAnOppositeProjectionIsNegated() =>
-        AssertEquivalent(Up.Iff(!Down), Lift.EqualTo(new Switch(Down.Indicator, new FlippedProjection())));
-
-    [Fact]
-    public void EntriesOfDifferentKindsInAnotherOrderAreReconciledToo() {
         var reordered = new Switch(Down.Indicator, new DirectionProjection()).Zip(Minutes).Biselect(pair => (pair.Item2, pair.Item1), pair => (pair.Item2, pair.Item1));
 
+        AssertSameConstraint(X.Expression.EqualTo(otherX.Expression) & Y.Expression.EqualTo(otherY.Expression), X.Zip(Y).EqualTo(swapped));
         AssertSameConstraint((Runtime.Expression <= 60 * Minutes.Expression) & (Up.Indicator <= Down.Indicator), Runtime.Zip(Lift) <= reordered);
     }
 
@@ -146,37 +136,26 @@ public sealed class ZipTests {
     }
 
     [Fact]
-    public void ZipIsAssociativeUpToTheShapeOfTheTuple() {
+    public void ZipIsAssociativeUpToTheShapeOfTheTupleAndItsProjectionReadsBackWhatItWrites() {
         var solution = Solution.Empty.With(Runtime, TimeSpan.FromMinutes(2)).With(Start, Origin.AddMinutes(5)).With(Up, true);
         var right = Runtime.Zip(Start.Zip(Lift));
         var left = Runtime.Zip(Start).Zip(Lift);
+        var value = ((TimeSpan.FromMinutes(2), Origin.AddMinutes(5)), Direction.Up);
 
         Assert.Equal(left.Components, right.Components);
         Assert.Equal((TimeSpan.FromMinutes(2), (Origin.AddMinutes(5), Direction.Up)), solution.Value(right));
-        Assert.Equal(((TimeSpan.FromMinutes(2), Origin.AddMinutes(5)), Direction.Up), solution.Value(left));
+        Assert.Equal(value, solution.Value(left));
+        Assert.Equal<double>([120, 300, 1], left.Projection.Encode(value));
+        Assert.Equal(value, left.Projection.Decode(left.Projection.Encode(value)));
     }
 
     [Fact]
-    public void AZippedProjectionReadsBackWhatItWrites() {
-        var projection = Runtime.Zip(Start).Zip(Lift).Projection;
-        var value = ((TimeSpan.FromMinutes(2), Origin.AddMinutes(5)), Direction.Up);
-
-        Assert.Equal<double>([120, 300, 1], projection.Encode(value));
-        Assert.Equal(value, projection.Decode(projection.Encode(value)));
-    }
-
-    [Fact]
-    public void APairIsReadAsSomethingMadeOfItsHalves() {
+    public void APairIsReadAsSomethingMadeOfItsHalvesOrReadAndWrittenAsARecordOfYourOwn() {
         var finish = Start.Zip(Runtime).Select((from, span) => from + span);
+        var location = X.Zip(Y).Biselect((across, down) => new Location(across, down), place => (place.X, place.Y));
 
         Assert.Equal(Origin.AddMinutes(7), Solution.Empty.With(Start, Origin.AddMinutes(5)).With(Runtime, TimeSpan.FromMinutes(2)).Value(finish));
         Assert.IsNotAssignableFrom<IWritableExpression<DateTime>>(finish);
-    }
-
-    [Fact]
-    public void APairIsReadAndWrittenAsARecordOfYourOwn() {
-        var location = X.Zip(Y).Biselect((across, down) => new Location(across, down), place => (place.X, place.Y));
-
         AssertSameConstraint(X.Expression.EqualTo(1) & Y.Expression.EqualTo(2), location.EqualTo(new Location(1, 2)));
         Assert.Equal(new Location(3, 4), Solution.Empty.With(location, new Location(3, 4)).Value(location));
     }
@@ -202,17 +181,12 @@ public sealed class ZipTests {
     }
 
     [Fact]
-    public void ASequenceMustBeGivenOneValueForEachEntry() {
+    public void ASequenceMustBeGivenOneValueForEachEntryAndAnEmptyOneHasNothingToCompare() {
         var runtimes = new[] { Runtime, Minutes }.Sequence();
+        var nothing = Array.Empty<Quantity<TimeSpan>>().Sequence();
 
         Assert.Throws<ArgumentException>(() => runtimes.EqualTo([TimeSpan.Zero]));
         Assert.Throws<ArgumentException>(() => runtimes <= new[] { Runtime }.Sequence());
-    }
-
-    [Fact]
-    public void AnEmptySequenceHasNothingToCompare() {
-        var nothing = Array.Empty<Quantity<TimeSpan>>().Sequence();
-
         Assert.Empty(nothing.Components);
         Assert.Empty(Solution.Empty.Value(nothing));
         Assert.Equal(BooleanConstant.True, nothing.EqualTo([]));

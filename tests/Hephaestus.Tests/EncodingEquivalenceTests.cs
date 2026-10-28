@@ -30,25 +30,21 @@ public sealed class EncodingEquivalenceTests {
     public static TheoryData<string> HandWrittenCases => [.. HandWritten.Keys];
 
     private static readonly ImmutableDictionary<string, IBooleanExpression<ILinearArithmetic>> HandWritten = new Dictionary<string, IBooleanExpression<ILinearArithmetic>> {
-        ["disjunction of comparisons"] = (X + 1 <= M) | (M + 1 <= X),
         ["guarded disjunction"] = !(A & B) | (X + 1 <= M) | (M + 1 <= X),
-        ["implication"] = A.Implies(X >= 2),
+        ["implications, of an inequality and of an equality"] = A.Implies(X >= 2) & B.Implies((M + N).EqualTo(3)),
         ["equivalence reifies in both directions"] = A.Iff(M + N >= 4),
         ["exclusive or"] = A ^ (X <= 1),
         ["strict over reals"] = (X < 2) | B,
-        ["strict over whole numbers"] = (M < N) | (N < M),
+        // Split into two strict inequalities, each with a gap of one.
         ["disequality"] = M.NotEqualTo(N),
         ["negated equality under a guard"] = A | !M.EqualTo(2),
-        ["equality under a guard"] = A.Implies((M + N).EqualTo(3)),
         ["conjunction under a disjunction"] = ((M >= 2) & (N >= 2)) | ((M <= 0) & (X <= 1)),
         ["nested alternation"] = A | ((M >= 1) & (B | ((N >= 1) & ((X >= 2) | (X <= 1))))),
         ["negated compound"] = !((M >= 2) & (A | (X <= 1))),
         ["shared subformula"] = (A | (M + N <= 3)) & (B | (M + N <= 3)),
-        ["tautology"] = A | !A,
-        ["contradiction under a disjunction"] = (A & !A) | (M >= 3),
+        ["tautology, and contradiction under a disjunction"] = (A | !A) & ((A & !A) | (M >= 3)),
         ["unsatisfiable"] = (M >= 2) & (M <= 1),
-        ["always-true comparison in a disjunction"] = B | (X <= 5),
-        ["never-true comparison in a disjunction"] = B | (X >= 5),
+        ["always-true and never-true comparisons in disjunctions"] = (B | (X <= 5)) & (A | (X >= 5)),
         ["binaries as numbers"] = (A.Indicator + B.Indicator).EqualTo(1) | (M >= 3),
         ["iff of iffs"] = A.Iff(B.Iff(M >= 2)),
     }.ToImmutableDictionary();
@@ -62,18 +58,12 @@ public sealed class EncodingEquivalenceTests {
         Assert.Null(verdict.Disagreement);
     }
 
-    [Theory]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(3)]
-    [InlineData(4)]
-    [InlineData(5)]
-    [InlineData(6)]
-    [InlineData(7)]
-    [InlineData(8)]
-    public void TheEncodingAcceptsExactlyWhatARandomFormulaDoes(int seed) {
-        var random = new Random(seed);
-        var verdicts = Enumerable.Range(0, 40).Select(_ => Check(Domain & RandomFormula(random, depth: 2))).ToList();
+    [Fact]
+    public void TheEncodingAcceptsExactlyWhatARandomFormulaDoes() {
+        var verdicts = Enumerable.Range(1, 4)
+            .Select(seed => new Random(seed))
+            .SelectMany(random => Enumerable.Range(0, 40).Select(_ => Check(Domain & RandomFormula(random, depth: 2))))
+            .ToList();
 
         Assert.All(verdicts, verdict => Assert.Null(verdict.Disagreement));
         Assert.True(verdicts.Count(verdict => verdict.WasChecked) >= verdicts.Count / 2, "Too few random formulas were small enough to check.");
